@@ -54,3 +54,6 @@ def error():
         password='asdf1234'
     )
     division_by_zero = 1 / 0
+
+if __name__ == "__main__":
+    app.run(host='0.0.0.0', port=80)
