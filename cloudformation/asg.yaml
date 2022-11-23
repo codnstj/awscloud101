@@ -1,0 +1,298 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Demo Web Applcation Template
+
+Parameters:
+  AMIId:
+    Description: AMI Id
+    Type: AWS::EC2::Image::Id
+
+Resources:
+  VPC:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: 10.0.0.0/16
+      EnableDnsHostnames: true
+      EnableDnsSupport: true
+      InstanceTenancy: default
+      Tags:
+        - Key: Name
+          Value: vpc
+  PublicSubnet1:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId:
+        Ref: VPC
+      AvailabilityZone:
+        Fn::Select:
+          - 0
+          - Fn::GetAZs: ""
+      CidrBlock: 10.0.0.0/17
+      MapPublicIpOnLaunch: True
+      Tags:
+        - Key: Name
+          Value: publicSubnet1
+  PublicSubnet1RouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId:
+        Ref: VPC
+      Tags:
+        - Key: Name
+          Value: publicSubnet1
+  PublicSubnet1RouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId:
+        Ref: PublicSubnet1RouteTable
+      SubnetId:
+        Ref: PublicSubnet1
+  PublicSubnet1DefaultRoute:
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId:
+        Ref: PublicSubnet1RouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId:
+        Ref: IGW
+  PublicSubnet2:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId:
+        Ref: VPC
+      AvailabilityZone:
+        Fn::Select:
+          - 1
+          - Fn::GetAZs: ""
+      CidrBlock: 10.0.128.0/17
+      MapPublicIpOnLaunch: true
+      Tags:
+        - Key: Name
+          Value: publicSubnet2
+  PublicSubnet2RouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId:
+        Ref: VPC
+      Tags:
+        - Key: Name
+          Value: publicSubnet2
+  PublicSubnet2RouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId:
+        Ref: PublicSubnet2RouteTable
+      SubnetId:
+        Ref: PublicSubnet2
+  PublicSubnet2DefaultRoute:
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId:
+        Ref: PublicSubnet2RouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId:
+        Ref: IGW
+  IGW:
+    Type: AWS::EC2::InternetGateway
+    Properties:
+    Tags:
+      - Key: Name
+        Value: vpc
+  VPCGW:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      VpcId:
+        Ref: VPC
+      InternetGatewayId:
+        Ref: IGW
+  InstanceSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: InstanceSecurityGroup
+      SecurityGroupEgress:
+        - CidrIp: 0.0.0.0/0
+          Description: Allow all outbound traffic by default
+          IpProtocol: "-1"
+      Tags:
+        - Key: Name
+          Value: instance-sg
+      VpcId:
+        Ref: vpc
+  InstanceSecurityGroupIngress:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      IpProtocol: tcp
+      Description: Load balancer to target
+      FromPort: 80
+      GroupId:
+        Fn::GetAtt:
+          - InstanceSecurityGroup
+          - GroupId
+      SourceSecurityGroupId:
+        Fn::GetAtt:
+          - ALBSecurityGroup
+          - GroupId
+      ToPort: 80
+  InstanceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Statement:
+          - Action: sts:AssumeRole
+            Effect: Allow
+            Principal:
+              Service:
+                Fn::Join:
+                  - ""
+                  - - ec2.
+                    - Ref: AWS::URLSuffix
+        Version: "2012-10-17"
+      Tags:
+        - Key: Name
+          Value: instance-role
+  InstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Roles:
+        - Ref: InstanceRole
+  LaunchConfig:
+    Type: AWS::AutoScaling::LaunchConfiguration
+    Properties:
+      ImageId: !Ref AMIId
+      InstanceType: t3.micro
+      IamInstanceProfile:
+        Ref: InstanceProfile
+      SecurityGroups:
+        - Fn::GetAtt:
+            - InstanceSecurityGroup
+            - GroupId
+      UserData:
+        #!/bin/bash
+
+        PUBLIC_IP=$(curl -s http://169.254.169.254/latest/meta-data/public-ipv4)
+        AZ=$(curl -s http://169.254.169.254/latest/meta-data/placement/availability-zone)
+        AZ_CODE="${AZ: -1}"
+
+        if [ $AZ_CODE = "a" ]
+        then
+          echo "<style>body {background-color: green}</style>" > /tmp/index.html
+        elif [ $AZ_CODE = "b" ]
+        then
+          echo "<style>body {background-color: blue}</style>" > /tmp/index.html
+        elif [ $AZ_CODE = "c" ]
+        then
+          echo "<style>body {background-color: orange}</style>" > /tmp/index.html
+        else
+          echo "<style>body {background-color: red}</style>" > /tmp/index.html
+        fi
+
+        echo "<h1>Availability Zone: $AZ</h1>" >> /tmp/index.html
+        echo "<h1>Public IP: $PUBLIC_IP</h1>" >> /tmp/index.html
+
+        yum update -y
+        yum install -y httpd
+        mv /tmp/index.html /var/www/html/
+
+        systemctl enable httpd
+        systemctl start httpd
+  ASG:
+    Type: AWS::AutoScaling::AutoScalingGroup
+    Properties:
+      MaxSize: "4"
+      MinSize: "2"
+      HealthCheckGracePeriod: "60" 
+      LaunchConfigurationName:
+        Ref: LaunchConfig
+      Tags:
+        - Key: Name
+          PropagateAtLaunch: true
+          Value: my-web-server
+      TargetGroupARNs:
+        - Ref: TargetGroup
+      VPCZoneIdentifier:
+        - Ref: PublicSubnet1
+        - Ref: PublicSubnet2
+    UpdatePolicy:
+      AutoScalingScheduledAction:
+        IgnoreUnmodifiedGroupSizeProperties: true
+  ALB:
+    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+    Properties:
+      LoadBalancerAttributes:
+        - Key: deletion_protection.enabled
+          Value: "false"
+      Scheme: internet-facing
+      SecurityGroups:
+        - Fn::GetAtt:
+            - ALBSecurityGroup
+            - GroupId
+      Subnets:
+        - Ref: PublicSubnet1
+        - Ref: PublicSubnet2
+      Type: application
+    DependsOn:
+      - PublicSubnet1DefaultRoute
+      - PublicSubnet2DefaultRoute
+  ALBSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Automatically created Security Group for ELB asglb6559C700
+      SecurityGroupIngress:
+        - CidrIp: 0.0.0.0/0
+          Description: Allow from anyone on port 80
+          FromPort: 80
+          IpProtocol: tcp
+          ToPort: 80
+      VpcId:
+        Ref: VPC
+  ALBSecurityGroupEgress:
+    Type: AWS::EC2::SecurityGroupEgress
+    Properties:
+      GroupId:
+        Fn::GetAtt:
+          - ALBSecurityGroup
+          - GroupId
+      IpProtocol: tcp
+      Description: Load balancer to target
+      DestinationSecurityGroupId:
+        Fn::GetAtt:
+          - InstanceSecurityGroup
+          - GroupId
+      FromPort: 80
+      ToPort: 80
+  Listener:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties:
+      DefaultActions:
+        - TargetGroupArn:
+            Ref: TargetGroup
+          Type: forward
+      Port: 80
+      Protocol: HTTP
+  TargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      Port: 80
+      Protocol: HTTP
+      TargetGroupAttributes:
+        - Key: deregistration_delay.timeout_seconds
+          Value: "60"
+        - Key: stickiness.enabled
+          Value: "false"
+      TargetType: instance
+      VpcId:
+        Ref: VPC.id
+
+Outputs:
+  SiteURL:
+    Value:
+      Fn::GetAtt:
+        - ALB
+        - DNSName
+  AutoScalingGroupName:
+    Value:
+      Ref: ASG
+  LoadBalancerName:
+    Value:
+      Fn::GetAtt:
+        - ALB
+        - LoadBalancerName
