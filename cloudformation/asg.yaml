@@ -11,8 +11,8 @@ Resources:
     Type: AWS::EC2::VPC
     Properties:
       CidrBlock: 10.0.0.0/16
-      EnableDnsHostnames: true
-      EnableDnsSupport: true
+      EnableDnsHostnames: 'true'
+      EnableDnsSupport: 'true'
       InstanceTenancy: default
       Tags:
         - Key: Name
@@ -94,9 +94,9 @@ Resources:
   IGW:
     Type: AWS::EC2::InternetGateway
     Properties:
-    Tags:
-      - Key: Name
-        Value: vpc
+      Tags:
+        - Key: Name
+          Value: vpc
   VPCGW:
     Type: AWS::EC2::VPCGatewayAttachment
     Properties:
@@ -116,7 +116,7 @@ Resources:
         - Key: Name
           Value: instance-sg
       VpcId:
-        Ref: vpc
+        Ref: VPC
   InstanceSecurityGroupIngress:
     Type: AWS::EC2::SecurityGroupIngress
     Properties:
@@ -157,7 +157,8 @@ Resources:
   LaunchConfig:
     Type: AWS::AutoScaling::LaunchConfiguration
     Properties:
-      ImageId: !Ref AMIId
+      ImageId: 
+        Ref: AMIId
       InstanceType: t3.micro
       IamInstanceProfile:
         Ref: InstanceProfile
@@ -165,35 +166,36 @@ Resources:
         - Fn::GetAtt:
             - InstanceSecurityGroup
             - GroupId
-      UserData:
-        #!/bin/bash
+      UserData: 
+        Fn::Base64: |
+            #!/bin/bash
 
-        PUBLIC_IP=$(curl -s http://169.254.169.254/latest/meta-data/public-ipv4)
-        AZ=$(curl -s http://169.254.169.254/latest/meta-data/placement/availability-zone)
-        AZ_CODE="${AZ: -1}"
+            PUBLIC_IP=$(curl -s http://169.254.169.254/latest/meta-data/public-ipv4)
+            AZ=$(curl -s http://169.254.169.254/latest/meta-data/placement/availability-zone)
+            AZ_CODE="${AZ: -1}"
 
-        if [ $AZ_CODE = "a" ]
-        then
-          echo "<style>body {background-color: green}</style>" > /tmp/index.html
-        elif [ $AZ_CODE = "b" ]
-        then
-          echo "<style>body {background-color: blue}</style>" > /tmp/index.html
-        elif [ $AZ_CODE = "c" ]
-        then
-          echo "<style>body {background-color: orange}</style>" > /tmp/index.html
-        else
-          echo "<style>body {background-color: red}</style>" > /tmp/index.html
-        fi
+            if [ $AZ_CODE = "a" ]
+            then
+              echo "<style>body {background-color: green}</style>" > /tmp/index.html
+            elif [ $AZ_CODE = "b" ]
+            then
+              echo "<style>body {background-color: blue}</style>" > /tmp/index.html
+            elif [ $AZ_CODE = "c" ]
+            then
+              echo "<style>body {background-color: orange}</style>" > /tmp/index.html
+            else
+              echo "<style>body {background-color: red}</style>" > /tmp/index.html
+            fi
 
-        echo "<h1>Availability Zone: $AZ</h1>" >> /tmp/index.html
-        echo "<h1>Public IP: $PUBLIC_IP</h1>" >> /tmp/index.html
+            echo "<h1>Availability Zone: $AZ</h1>" >> /tmp/index.html
+            echo "<h1>Public IP: $PUBLIC_IP</h1>" >> /tmp/index.html
 
-        yum update -y
-        yum install -y httpd
-        mv /tmp/index.html /var/www/html/
+            yum update -y
+            yum install -y httpd
+            mv /tmp/index.html /var/www/html/
 
-        systemctl enable httpd
-        systemctl start httpd
+            systemctl enable httpd
+            systemctl start httpd
   ASG:
     Type: AWS::AutoScaling::AutoScalingGroup
     Properties:
@@ -259,15 +261,6 @@ Resources:
           - GroupId
       FromPort: 80
       ToPort: 80
-  Listener:
-    Type: AWS::ElasticLoadBalancingV2::Listener
-    Properties:
-      DefaultActions:
-        - TargetGroupArn:
-            Ref: TargetGroup
-          Type: forward
-      Port: 80
-      Protocol: HTTP
   TargetGroup:
     Type: AWS::ElasticLoadBalancingV2::TargetGroup
     Properties:
@@ -280,7 +273,19 @@ Resources:
           Value: "false"
       TargetType: instance
       VpcId:
-        Ref: VPC.id
+        Ref: VPC
+  Listener:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties:
+      LoadBalancerArn: 
+        Ref: ALB
+      DefaultActions:
+        - TargetGroupArn:
+            Ref: TargetGroup
+          Type: forward
+      Port: 80
+      Protocol: HTTP
+
 
 Outputs:
   SiteURL:
